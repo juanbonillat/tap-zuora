@@ -4,6 +4,7 @@ import backoff
 import requests
 import singer
 from singer import metrics
+import pendulum
 
 from tap_zuora.exceptions import (
     ApiException,
@@ -30,7 +31,7 @@ URLS = {
     (IS_SAND, IS_EURO): ["https://rest.sandbox.eu.zuora.com/"],
 }
 
-LATEST_WSDL_VERSION = "91.0"
+LATEST_WSDL_VERSION = "145.0"
 
 LOGGER = singer.get_logger()
 
@@ -44,6 +45,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         sandbox: bool = False,
         european: bool = False,
         is_rest: bool = False,
+        use_oauth2: bool = True
     ):
         self.username = username
         self.password = password
@@ -52,6 +54,9 @@ class Client:  # pylint: disable=too-many-instance-attributes
         self.partner_id = partner_id
         self.is_rest = is_rest
         self._session = requests.Session()
+        self.oauth2_token = None 
+        self.use_oauth2 = use_oauth2
+        self.token_expiration_date = None
 
         self.base_url = self.get_url()
 
@@ -64,6 +69,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         european = config.get("european", False) == "true"
         partner_id = config.get("partner_id", None)
         is_rest = config.get("api_type") == "REST"
+        use_oauth2 = config.get('use_oauth2', True) 
         return Client(
             config["username"],
             config["password"],
@@ -71,6 +77,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
             sandbox,
             european,
             is_rest,
+            use_oauth2
         )
 
     def get_url(self) -> str:
@@ -79,6 +86,7 @@ class Client:  # pylint: disable=too-many-instance-attributes
         stream_name = "Account"
         for url_prefix in potential_urls:
             if self.is_rest:
+                self.ensure_valid_auth_token()
                 resp = self._retryable_request(
                     "GET",
                     f"{url_prefix}v1/describe/{stream_name}",
@@ -126,6 +134,13 @@ class Client:  # pylint: disable=too-many-instance-attributes
     @property
     def rest_headers(self) -> Dict:
         """Returns headers for HTTP request."""
+        if self.use_oauth2:
+            return {
+                'Authorization': 'Bearer ' + self.oauth2_token['access_token'],
+                'Content-Type': 'application/json',
+                'X-Zuora-WSDL-Version': LATEST_WSDL_VERSION
+            }
+            
         return {
             "apiAccessKeyId": self.username,
             "apiSecretAccessKey": self.password,
@@ -189,6 +204,38 @@ class Client:  # pylint: disable=too-many-instance-attributes
             raise ApiException(resp)
 
         return resp
+    
+    def is_auth_token_valid(self):
+        if self.oauth2_token and self.token_expiration_date and pendulum.utcnow().diff(self.token_expiration_date).in_seconds() > 60: # Allows at least one minute of breathing room
+            return True
+
+        return False
+
+    def ensure_valid_auth_token(self):
+        if not self.is_auth_token_valid():
+            self.oauth2_token = self.request_token()
+
+    def request_token(self):
+        if self.sandbox:
+            url = "https://rest.apisandbox.zuora.com"
+        else:
+            url = "https://rest.zuora.com"
+        url = url + "/oauth/token"
+        payload = {
+            'client_id': self.username,
+            'client_secret': self.password,
+            'grant_type': 'client_credentials',
+        }
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        token = self._request('POST', url, data=payload,headers=headers).json()
+        LOGGER.info(f"Debug Token: {token}")
+        self.token_expiration_date = pendulum.utcnow().add(seconds=token['expires_in'])
+
+        return token
+
 
     def aqua_request(self, method: str, path: str, **kwargs) -> requests.Response:
         with metrics.http_request_timer(path):

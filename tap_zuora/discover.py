@@ -8,6 +8,7 @@ from tap_zuora import apis
 from tap_zuora.client import Client
 from tap_zuora.exceptions import ApiException
 
+
 TYPE_MAP = {
     "picklist": "string",
     "text": "string",
@@ -245,7 +246,8 @@ def discover_streams(client: Client) -> List:
     """Performs discovery for each stream."""
     streams = []
     failed_stream_names = []
-    for stream_name in discover_stream_names(client):
+    for stream_name in discover_stream_names(client) + [x for x in ["RevenueEventCreditMemoItem","RevenueEventDebitMemoItem"] if x not in discover_stream_names(client)]:
+
 
         if stream := discover_stream(client, stream_name):
             streams.append(stream)
