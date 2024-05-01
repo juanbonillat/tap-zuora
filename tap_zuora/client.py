@@ -65,9 +65,8 @@ class Client:  # pylint: disable=too-many-instance-attributes
 
     @staticmethod
     def from_config(config: Dict):
-        sandbox = config.get("sandbox", False) == "true"
+        sandbox = config.get("sandbox", False) 
         european = config.get("european", False) == "true"
-        partner_id = config.get("partner_id", None)
         is_rest = config.get("api_type") == "REST"
         use_oauth2 = config.get('use_oauth2', True) 
         return Client(
