@@ -231,7 +231,6 @@ class Client:  # pylint: disable=too-many-instance-attributes
         }
 
         token = self._request('POST', url, data=payload,headers=headers).json()
-        LOGGER.info(f"Debug Token: {token}")
         self.token_expiration_date = pendulum.utcnow().add(seconds=token['expires_in'])
 
         return token
